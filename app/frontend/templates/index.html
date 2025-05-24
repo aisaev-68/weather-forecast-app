@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Прогноз погоды</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gradient-to-r from-blue-100 to-purple-200 min-h-screen flex items-center justify-center">
+  <!-- Убрали relative у этого контейнера -->
+  <div class="bg-white p-8 rounded-xl shadow-lg w-full max-w-xl">
+    <h1 class="text-2xl font-bold mb-4 text-center text-gray-800">Прогноз погоды</h1>
+
+    <!-- Ссылка на показ истории -->
+    <div class="absolute top-4 right-4">
+      <a href="#" id="show-history" class="text-sm text-blue-600 hover:underline">История запросов</a>
+    </div>
+
+    <!-- Модальное окно истории -->
+    <div id="history-modal" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center hidden z-50">
+      <div class="bg-white p-6 rounded-xl shadow-lg w-11/12 max-w-md relative z-60">
+        <button id="close-history"
+                class="absolute top-2 right-2 text-gray-500 hover:text-gray-800 text-2xl leading-none">&times;</button>
+        <h2 class="text-lg font-semibold mb-4">Ваша история запросов</h2>
+        <ul id="history-list" class="list-disc list-inside text-gray-700 max-h-60 overflow-y-auto">
+          <!-- сюда придут записи истории -->
+        </ul>
+      </div>
+    </div>
+
+    <div id="last-city-container" class="mb-4"></div>
+
+    <div class="relative mb-4">
+      <input id="city-input" type="text" placeholder="Введите город"
+             class="w-full p-3 border rounded-md shadow" autocomplete="off"/>
+      <ul id="suggestions"
+          class="absolute top-full left-0 right-0 bg-white border rounded-md shadow max-h-40 overflow-y-auto hidden z-10"></ul>
+    </div>
+
+    <button id="submit-btn"
+            class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full mb-4">
+      Получить прогноз
+    </button>
+
+    <div id="weather-result" class="text-gray-700 text-sm whitespace-pre-wrap"></div>
+  </div>
+
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      const input             = document.getElementById("city-input");
+      const suggestions       = document.getElementById("suggestions");
+      const submitBtn         = document.getElementById("submit-btn");
+      const result            = document.getElementById("weather-result");
+      const lastCityContainer = document.getElementById("last-city-container");
+      const showHistoryLink   = document.getElementById("show-history");
+      const historyModal      = document.getElementById("history-modal");
+      const closeHistoryBtn   = document.getElementById("close-history");
+      const historyList       = document.getElementById("history-list");
+      let debounceTimer;
+
+      showHistoryLink.addEventListener("click", async e => {
+        e.preventDefault();
+        try {
+          const resp = await fetch("/api/search-history");
+          if (!resp.ok) throw new Error("Не удалось загрузить историю");
+          const data = await resp.json();
+          historyList.innerHTML = data.length
+            ? data.map(item => `<li>${item.city}: ${item.count} раз(а)</li>`).join("")
+            : "<li>История пуста</li>";
+        } catch {
+          historyList.innerHTML = "<li>Ошибка загрузки истории</li>";
+        }
+        historyModal.classList.remove("hidden");
+      });
+
+      closeHistoryBtn.addEventListener("click", () => {
+        historyModal.classList.add("hidden");
+      });
+
+      const lastCity = localStorage.getItem("lastCity");
+      if (lastCity) {
+        lastCityContainer.innerHTML = `
+          <div class="bg-yellow-100 p-3 rounded-md shadow mb-4 text-center">
+            Вы уже смотрели погоду для города: <strong>${lastCity}</strong><br/>
+            <button id="load-last-city"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded mt-2">
+              Показать прогноз снова
+            </button>
+          </div>
+        `;
+        document.getElementById("load-last-city").addEventListener("click", () => {
+          input.value = lastCity;
+          loadWeather(lastCity);
+          lastCityContainer.innerHTML = "";
+        });
+      }
+
+      input.addEventListener("input", () => {
+        const value = input.value.trim();
+        clearTimeout(debounceTimer);
+        if (value.length < 3) {
+          suggestions.innerHTML = "";
+          suggestions.classList.add("hidden");
+          return;
+        }
+        debounceTimer = setTimeout(async () => {
+          try {
+            const res = await fetch(
+              `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(value)}&format=json&limit=5`
+            );
+            const data = await res.json();
+            suggestions.innerHTML = "";
+            if (!data.length) {
+              suggestions.classList.add("hidden");
+              return;
+            }
+            data.forEach(item => {
+              const li = document.createElement("li");
+              li.textContent = item.display_name;
+              li.className   = "px-3 py-2 hover:bg-gray-200 cursor-pointer";
+              li.addEventListener("click", () => {
+                input.value = item.display_name;
+                suggestions.innerHTML = "";
+                suggestions.classList.add("hidden");
+              });
+              suggestions.appendChild(li);
+            });
+            suggestions.classList.remove("hidden");
+          } catch {
+            suggestions.classList.add("hidden");
+          }
+        }, 300);
+      });
+      document.addEventListener("click", e => {
+        if (!e.target.closest("#city-input") && !e.target.closest("#suggestions")) {
+          suggestions.classList.add("hidden");
+        }
+      });
+
+      submitBtn.addEventListener("click", () => {
+        const city = input.value.trim();
+        if (!city) return alert("Введите название города");
+        loadWeather(city);
+      });
+
+      async function loadWeather(city) {
+        result.textContent = "Загрузка...";
+        try {
+          const resp = await fetch("/api/weather", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ city })
+          });
+          if (!resp.ok) {
+            const err = await resp.json();
+            throw new Error(err.detail || "Ошибка запроса");
+          }
+          const data = await resp.json();
+
+          localStorage.setItem("lastCity", data.city);
+
+          const nowMs = Date.now();
+          const slice = data.hourly
+            .map(e => ({ ...e, ts: new Date(e.time).getTime() }))
+            .filter(e => e.ts >= nowMs)
+            .slice(0, 6);
+
+          let html = `
+            <h2 class="text-lg font-semibold mb-2">Город: ${data.city}</h2>
+            <p>Координаты: ${data.latitude}, ${data.longitude}</p>
+            <table class="w-full table-auto border mt-4 text-sm">
+              <thead>
+                <tr class="bg-gray-200">
+                  <th class="border px-2 py-1 text-left">Время</th>
+                  <th class="border px-2 py-1 text-left">Темп. (°C)</th>
+                  <th class="border px-2 py-1 text-left">Погода</th>
+                </tr>
+              </thead><tbody>
+          `;
+          slice.forEach(e => {
+            html += `
+              <tr>
+                <td class="border px-2 py-1">${new Date(e.time).toLocaleString()}</td>
+                <td class="border px-2 py-1">${e.temperature}</td>
+                <td class="border px-2 py-1">${e.weather || "-"}</td>
+              </tr>
+            `;
+          });
+          html += `</tbody></table>`;
+          result.innerHTML = html;
+        } catch (err) {
+          result.textContent = `Ошибка: ${err.message}`;
+        }
+      }
+    });
+  </script>
+</body>
+</html>

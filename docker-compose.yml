@@ -1,0 +1,62 @@
+services:
+  fastapi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      - postgres
+    volumes:
+      - ./app:/code/app
+      - ./tests:/code/tests
+#      - ./alembic:/code/alembic
+    networks:
+      - net
+    container_name: fastapi
+
+  nginx:
+    container_name: nginx
+    restart: always
+    image: "nginx:latest"
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf
+      - ./app/frontend/templates:/www/data/templates
+    networks:
+      - net
+    depends_on:
+      - fastapi
+    command: [ "sh", "-c", "nginx -g 'daemon off;'" ]
+
+  postgres:
+    image: "postgres"
+    restart: always
+    container_name: postgres
+    environment:
+      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+      PGDATA: "/var/lib/postgresql/data/pgdata"
+    volumes:
+      - "./db_data:/var/lib/postgresql/data"
+    networks:
+      - net
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL", "pg_isready -d ${DB_NAME} -U ${DB_USER}"
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+networks:
+  net:
+    driver: bridge
+
+volumes:
+  db_data:
+  frontend:
